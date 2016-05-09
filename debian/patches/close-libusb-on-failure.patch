@@ -1,0 +1,60 @@
+From: Ludovic Rousseau <ludovic.rousseau@free.fr>
+Date: Tue, 19 Apr 2016 18:30:06 +0000 (+0200)
+Subject: Fix a busy loop consuming 100% of CPU
+Origin: https://alioth.debian.org/plugins/scmgit/cgi-bin/gitweb.cgi?p=pcsclite%2FCCID.git;a=commitdiff_plain;h=3c21f452543983f3625a1965ce234074cbda6865
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=812087
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=821787
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/ccid/+bug/1551897
+
+
+Fix a busy loop consuming 100% of CPU
+
+If opening a reader fails then we must call close_libusb_if_needed() to
+free any libusb resources and stop the libusb hotplug thread.
+
+The problem as been detected with the Yubico Yubikey NEO U2F+CCID and
+the 2 Boardcom devices. These devices are composite USB devices so
+loading the CCID driver for a non-CCID interface was calling
+libusb_init() but not libusb_exit(). The libusb hotplug thread and other
+libusb allocated resources were not stopped and unallocated. On the next
+USB plug (even if not CCID) then an endless busy loop is started inside
+libusb hotplug.
+
+Fixes:
+- Debian bug #812087
+"pcscd takes 100 % cpu each time I insert a mass storage USB key"
+- Debian bug #821787
+"cleanup libusb when open fails"
+- Ubuntu bug #1572004
+"pcscd consumes 100% CPU"
+- Ubuntu bug #1551897
+"Excessive CPU utilization"
+
+Thanks a lot to Stefan Bühler for the analysis and patch
+https://bugs.debian.org/821787
+---
+
+Index: ccid-1.4.22/src/ccid_usb.c
+===================================================================
+--- ccid-1.4.22.orig/src/ccid_usb.c
++++ ccid-1.4.22/src/ccid_usb.c
+@@ -724,6 +724,9 @@ end:
+ 			goto again_libusb;
+ 		}
+ #endif
++		/* failed */
++		close_libusb_if_needed();
++
+ 		if (claim_failed)
+ 			return STATUS_COMM_ERROR;
+ 		DEBUG_INFO1("Device not found?");
+@@ -742,6 +745,9 @@ end1:
+ 	/* free bundle list */
+ 	bundleRelease(&plist);
+ 
++	if (return_value != STATUS_SUCCESS)
++		close_libusb_if_needed();
++
+ 	return return_value;
+ } /* OpenUSBByName */
+ 
